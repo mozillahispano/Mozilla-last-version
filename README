@@ -1,0 +1,4 @@
+Script que facilita la automatización para montar una página de descarga de los últimos productos de Mozilla.
+Dicho script se ejecutaría regularmente y lo que hace es buscar laś últimas versiones de los productos y si detecta que hay alguna más moderna la descarga para calcular, tamaños, md5, etc que posteriormente se presentarán en la web.
+
+Autores: Ricardo Palomares, stripTM
