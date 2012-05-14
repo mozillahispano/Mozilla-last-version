@@ -139,7 +139,7 @@ foreach($aProducts as $item) {
   $jsonData[$token] = json_decode(file_get_contents($conf[$token]['url_json']));
   $mailBody .= "La última versión es {$version}.";
   
-  if ((!array_key_exists('version', $conf[$token])) || ($version > $conf[$token]['version'])) {
+  if ((!array_key_exists('version', $conf[$token])) || ($version != $conf[$token]['version'])) {
     // We have a new version, so let's update it in the product JSON data
     $conf[$token]['version'] = $version;
 
