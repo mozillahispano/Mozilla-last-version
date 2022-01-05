@@ -3,8 +3,7 @@
 define ("BASE_DIR", dirname($_SERVER["SCRIPT_FILENAME"]));
 define ("RUTA_DESCARGA", BASE_DIR . '/download');
 define ("JSON_DESCARGAS", BASE_DIR .'/descargas.json');
-//define ("JSON_WEBDESCARGAS", BASE_DIR .'/../../www/sites/default/files/descargas.json');
-define ("JSON_WEBDESCARGAS", BASE_DIR .'/web_descargas.json');
+define ("JSON_WEBDESCARGAS", BASE_DIR .'/../../www/sites/default/files/descargas.json');
 
 $bDoDownload = true; // Debug variable: true for actually download of files
 
@@ -43,6 +42,21 @@ function format_bytes($size) {
 	if ($size == 0) { return('n/a'); } else {
 	return (round($size/pow(1024, ($i = floor(log($size, 1024)))), $i > 1 ? 2 : 0) . $sizes[$i]); }
 }
+function getUrlDownloadBinary($project, $platform) {
+  // Firefox and Thunderbird
+  if ($project !== 'seamonkey') return sprintf('https://download.mozilla.org/?product=%1$s-{version}&os=%2$s&lang=es-ES',
+    $project, $platform);
+  // SeaMonkey
+  // https://archive.mozilla.org/pub/seamonkey/releases/2.53.10.2/win64/es-ES/seamonkey-2.53.10.2.es-ES.win64.installer.exe
+  // https://archive.mozilla.org/pub/seamonkey/releases/2.53.10.2/linux-x86_64/es-ES/seamonkey-2.53.10.2.es-ES.linux-x86_64.tar.bz2
+  // https://archive.mozilla.org/pub/seamonkey/releases/2.53.10.2/mac/es-ES/seamonkey-2.53.10.2.es-ES.mac.dmg
+  $downloadPattern = [
+    'win' => 'https://archive.mozilla.org/pub/seamonkey/releases/{version}/win64/es-ES/seamonkey-{version}.es-ES.win64.installer.exe',
+    'linux' => 'https://archive.mozilla.org/pub/seamonkey/releases/{version}/linux-x86_64/es-ES/seamonkey-{version}.es-ES.linux-x86_64.tar.bz2',
+    'osx' => 'https://archive.mozilla.org/pub/seamonkey/releases/{version}/mac/es-ES/seamonkey-{version}.es-ES.mac.dmg',
+  ];
+  return $downloadPattern[$platform];
+}
 
 /****************************/
 /* Main program begins here */
@@ -67,18 +81,20 @@ foreach($aProducts as $item) {
   switch($token) {
     case 'firefox':
     case 'thunderbird':
-      $conf[$token]['url_json'] = sprintf('http://www.mozilla.org/includes/product-details/json/%s_versions.json', $token);
-      $conf[$token]['patron_descarga']['xpi'] = sprintf('http://releases.mozilla.org/pub/mozilla.org/%1$s/releases/%%s/linux-i686/xpi/es-ES.xpi',
+      $conf[$token]['url_json'] = sprintf('https://product-details.mozilla.org/1.0/%s_versions.json', $token);
+      $conf[$token]['patron_descarga']['xpi'] = sprintf('http://releases.mozilla.org/pub/mozilla.org/%1$s/releases/{version}/linux-x86_64/xpi/es-ES.xpi',
                                                         $token);
       break;
     case 'seamonkey':
-      $conf[$token]['url_json'] = 'http://www.seamonkey-project.org/seamonkey_versions.json';
-      $conf[$token]['patron_descarga']['xpi'] = 'ftp://ftp.mozilla.org/pub/mozilla.org/seamonkey/releases/%1$s/langpack/seamonkey-%1$s.es-ES.langpack.xpi';
+      $conf[$token]['url_json'] = 'https://www.seamonkey-project.org/seamonkey_versions.json';
+      $conf[$token]['patron_descarga']['xpi'] = 'https://releases.mozilla.org/pub/seamonkey/releases/{version}/langpack/seamonkey-{version}.es-ES.langpack.xpi';
       break;
   }
+  // temporal para la versión 31.0 http://proyectonave.es/node/360
+  // $conf['thunderbird']['patron_descarga']['xpi'] = 'http://proyectonave.es/sites/default/files/descargas/productos/thunderbird/31.0/es-ES.xpi';
+
   foreach($aPlatforms as $platform) {
-    $conf[$token]['patron_descarga'][$platform] = sprintf('http://download.mozilla.org/?product=%1$s-%%s&os=%2$s&lang=es-ES',
-                                                          $token, $platform);    
+    $conf[$token]['patron_descarga'][$platform] =  getUrlDownloadBinary($token, $platform);
   }
 }
 
@@ -125,10 +141,18 @@ if (!file_exists(RUTA_DESCARGA)) {
 
 foreach($aProducts as $item) {
   $token = strtolower($item);
-  
-  $mailBody .= "{$item} - Descargando datos JSON... ";
-  $jsonData[$token] = json_decode(file_get_contents($conf[$token]['url_json']));
-  
+
+  $mailBody .= "{$item} - Descargando datos JSON ".$conf[$token]['url_json']." ... ";
+  $arrContextOptions=array(
+    "ssl"=>array(
+        "verify_peer"=>false,
+        "verify_peer_name"=>false,
+    ),
+  );
+  $jsonData[$token] = json_decode(
+    file_get_contents($conf[$token]['url_json'], false, stream_context_create($arrContextOptions))
+  );
+
   switch($token) {
     case 'firefox': $version = $jsonData[$token]->LATEST_FIREFOX_VERSION; break;
     case 'thunderbird': $version = $jsonData[$token]->LATEST_THUNDERBIRD_VERSION; break;
@@ -136,9 +160,11 @@ foreach($aProducts as $item) {
   }
 
   // We recover the latest version information from Mozilla (or SeaMonkey) website
-  $jsonData[$token] = json_decode(file_get_contents($conf[$token]['url_json']));
+  $jsonData[$token] = json_decode(
+    file_get_contents($conf[$token]['url_json'], false, stream_context_create($arrContextOptions))
+  );
   $mailBody .= "La última versión es {$version}.";
-  
+
   if ((!array_key_exists('version', $conf[$token])) || ($version != $conf[$token]['version'])) {
     // We have a new version, so let's update it in the product JSON data
     $conf[$token]['version'] = $version;
@@ -146,24 +172,24 @@ foreach($aProducts as $item) {
     $mailBody .= " Nueva versión -> Descargando binarios...\n";
 
     foreach ($conf[$token]['patron_descarga'] as $idSO => $sPatronDescarga) {
-    	$file_source = sprintf($sPatronDescarga, $version);
-    	$file_target = RUTA_DESCARGA ."/" .$token ."_" .$idSO .".bin";
-    	$mailBody .= "- Descargando binario de $idSO... ";
+      $file_source = str_replace('{version}', $version, $sPatronDescarga);
+      $file_target = RUTA_DESCARGA ."/" .$token ."_" .$idSO .".bin";
+      $mailBody .= "- Descargando binario de $idSO... ";
 
-    	if ($bDoDownload) {
-    		download($file_source, $file_target);
-    	}
-    	if (is_file($file_target)) {
-      	$conf[$token]['url_descarga'][$idSO] = $file_source;
+      if ($bDoDownload) {
+        download($file_source, $file_target);
+      }
+      if (is_file($file_target)) {
+        $conf[$token]['url_descarga'][$idSO] = $file_source;
         $conf[$token]['md5_hash'][$idSO] = md5_file($file_target);
         $conf[$token]['hr_size'][$idSO] = format_bytes(filesize($file_target));
-    	  
-    		$mailBody .= "OK: " .basename($file_target)
-    		    ." " .$conf[$token]['hr_size'][$idSO]
-    		    ." " .$conf[$token]['md5_hash'][$idSO] ."\n";
-    		    
-    	  unlink($file_target);
-    	}
+
+        $mailBody .= "OK: " .basename($file_target)
+            ." " .$conf[$token]['hr_size'][$idSO]
+            ." " .$conf[$token]['md5_hash'][$idSO] ."\n";
+
+        unlink($file_target);
+      }
     }
     file_put_contents(JSON_DESCARGAS, json_encode($conf));
     $jsonUpdated = TRUE;
@@ -187,8 +213,8 @@ if (!mail("aaa@gmail.com, bbb@proyectonave.es",
      $mailBody, "From: noreply@proyectonave.es\r\n"
                . "Content-Type: text/plain; charset=UTF-8\r\n"
                . "Content-Transfer-Encoding: quoted-printable")) {
-       
+
   $mailBody .= "ERROR - No se ha podido enviar el mensaje de correo.\n\n";
-  file_put_contents(BASE_DIR . "/descargas_error.txt", $mailBody);     
+  file_put_contents(BASE_DIR . "/descargas_error.txt", $mailBody);
 }
 ?>
